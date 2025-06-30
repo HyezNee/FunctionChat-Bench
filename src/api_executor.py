@@ -17,6 +17,10 @@ from src.gemini_utils import (
 
 import qwen_agent
 
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
+from vllm import LLM, SamplingParams
+
 
 class AbstractModelAPIExecutor:
     """
@@ -430,6 +434,112 @@ class GeminiModelAPI(AbstractModelAPIExecutor):
         return response_output
 
 
+
+class LocalModelAPI(AbstractModelAPIExecutor):
+    def __init__(self, model, model_path):
+        super().__init__(model, None)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+        self.model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.bfloat16, device_map="auto")
+        self.model.eval()
+
+    def predict(self, api_request):
+        messages = api_request['messages']
+        tools = [tool['function'] for tool in api_request['tools']]
+        inputs = self.tokenizer.apply_chat_template(messages, tools=tools, add_generation_prompt=True, return_dict=True, return_tensors="pt")
+        input_ids_len = inputs["input_ids"].shape[-1] # Get the length of the input tokens
+        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+
+        outputs = self.model.generate(**inputs, max_new_tokens=40960)
+        generated_tokens = outputs[:, input_ids_len:] # Slice the output to get only the newly generated tokens
+        decoded = self.tokenizer.decode(generated_tokens[0], skip_special_tokens=True)
+        
+        # 주의! Qwen3에서만 유효
+        # Llama 사용 시 이 부분 바꿔야 함
+        # {"name": "get_weather", "arguments": {"location": "London", "unit": "celsius"}}
+        tool_calls = None
+        if '<tool_call>' in decoded:
+            tool_content = decoded.split('<tool_call>')[-1].replace('</tool_call>', '').strip()
+            try:
+                # json.loads로 감싸지 않은 경우도 있을 수 있음
+                tool_json = json.loads(tool_content)
+                # arguments 부분 str로 바꾸기
+                tool_json['arguments'] = json.dumps(tool_json['arguments'], ensure_ascii=False)
+            except Exception:
+                tool_json = tool_content  # fallback
+
+            tool_calls = [{
+                'id': "qwen3-functioncall-random-id",
+                'function': tool_json, 
+                'type': "function",
+                'index': None
+            }]
+
+        return {
+            "role": "assistant",
+            "content": decoded if not tool_calls else "",  # tool 호출 시 content는 비워두기
+            "tool_calls": tool_calls,
+            "function_call": None,
+            "name": None
+        }
+
+
+class VLLMModelAPI(AbstractModelAPIExecutor):
+    def __init__(self, model, model_path):
+        super().__init__(model, None)
+        self.model_path = model_path
+        self.llm = LLM(model=self.model_path,
+                       dtype=torch.bfloat16,
+                       tensor_parallel_size=2) # gpu 개수
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, trust_remote_code=True)
+
+    def predict(self, api_request):
+        messages = api_request["messages"]
+        tools = [tool['function'] for tool in api_request['tools']]
+
+        # vLLM에서는 문자열 형태로 prompt를 생성해야 함
+        prompt = self.tokenizer.apply_chat_template(
+            messages,
+            tools=tools,
+            add_generation_prompt=True,
+            tokenize=False
+        )
+
+        # Generate with vLLM
+        sampling_params = SamplingParams(temperature=0.0, max_tokens=4096)
+        outputs = self.llm.generate(prompt, sampling_params, use_tqdm=False)
+        decoded = outputs[0].outputs[0].text.strip()
+
+        # Qwen3-style tool call 처리
+        tool_calls = None
+        if '<tool_call>' in decoded:
+            tool_content = decoded.split('<tool_call>')[-1].replace('</tool_call>', '').strip()
+            try:
+                # json.loads로 감싸지 않은 경우도 있을 수 있음
+                tool_json = json.loads(tool_content)
+                # arguments 부분 str로 바꾸기
+                tool_json['arguments'] = json.dumps(tool_json['arguments'], ensure_ascii=False)
+            except Exception:
+                tool_json = tool_content  # fallback
+
+            tool_calls = [{
+                'id': "qwen3-functioncall-random-id",
+                'function': tool_json,
+                'type': "function",
+                'index': None
+            }]
+        
+        else:
+            decoded = decoded.split("</think>")[-1].strip()  # Qwen3-style think 태그 제거
+
+        return {
+            "role": "assistant",
+            "content": decoded if not tool_calls else "",  # tool 호출 시 content는 비워두기
+            "tool_calls": tool_calls,
+            "function_call": None,
+            "name": None
+        }
+
+
 class APIExecutorFactory:
     """
     A factory class to create model API executor instances based on the model name.
@@ -468,5 +578,9 @@ class APIExecutorFactory:
             return MistralModelAPI(model_name, api_key)
         elif model_name.startswith('gemini'):  # Google developed model
             return GeminiModelAPI(model_name, gcloud_project_id=gcloud_project_id, gcloud_location=gcloud_location)
+        elif model_name.startswith('vllm'): # local model: vLLM
+            print("Load local model with vLLM: ", model_name)
+            return VLLMModelAPI(model_name, model_path)
         else:
-            raise ValueError("Unsupported model name")
+            print("Load local model: ", model_name)
+            return LocalModelAPI(model_name, model_path)
