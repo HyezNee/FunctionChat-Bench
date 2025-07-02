@@ -1,7 +1,7 @@
 # FunctionChat-Bench: Comprehensive Evaluation of Language Model's Generative Capabilities in Korean Tool-use Dialogs
 
 ## (추가) 사용법
-1. 코드 다운받기: https://github.com/HyezNee/FunctionChat-Bench
+1. 코드 다운받기 (git clone ...)
     - 원본 깃헙 다운 ㄴㄴ 수정 버전은 이 저장소에 있음
 2. 환경 세팅
     - python≤3.11 이어야 하는 것 같다. (더 높을 경우 numpy 설치하는 데 에러남)
