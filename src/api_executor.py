@@ -20,6 +20,7 @@ import qwen_agent
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 from vllm import LLM, SamplingParams
+from .utils import convert_system_prompt_into_user_prompt, combine_consecutive_user_prompts
 
 
 class AbstractModelAPIExecutor:
@@ -441,24 +442,46 @@ class LocalModelAPI(AbstractModelAPIExecutor):
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
         self.model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.bfloat16, device_map="auto")
         self.model.eval()
+        self.model_name = model
 
     def predict(self, api_request):
         messages = api_request['messages']
         tools = [tool['function'] for tool in api_request['tools']]
-        inputs = self.tokenizer.apply_chat_template(messages, tools=tools, add_generation_prompt=True, return_dict=True, return_tensors="pt")
+        if 'gemma-3' in self.model_name.lower():
+            tool_prompt = '''Here is a list of functions in JSON format that you can invoke.
+{functions}
+When using tools, make calls in a JSON format:
+{{"name": "tool_call_name", "arguments": {{"arg1": "value1", "arg2": "value2"}}}}, ... (additional parallel tool calls as needed)'''
+            messages[0]['content'] += tool_prompt.format(functions=tools)
+            messages = convert_system_prompt_into_user_prompt(messages)
+            messages = combine_consecutive_user_prompts(messages)
+            inputs = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, return_dict=True, return_tensors="pt")
+        else:
+            inputs = self.tokenizer.apply_chat_template(messages, tools=tools, add_generation_prompt=True, return_dict=True, return_tensors="pt")
+        
         input_ids_len = inputs["input_ids"].shape[-1] # Get the length of the input tokens
         inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
-        outputs = self.model.generate(**inputs, max_new_tokens=40960)
+        outputs = self.model.generate(**inputs, max_new_tokens=20480)
         generated_tokens = outputs[:, input_ids_len:] # Slice the output to get only the newly generated tokens
         decoded = self.tokenizer.decode(generated_tokens[0], skip_special_tokens=True)
         
-        # 주의! Qwen3에서만 유효
-        # Llama 사용 시 이 부분 바꿔야 함
         # {"name": "get_weather", "arguments": {"location": "London", "unit": "celsius"}}
         tool_calls = None
-        if '<tool_call>' in decoded:
+        tool_content = None
+
+        if '<tool_call>' in decoded:    # Qwen3, etc.
             tool_content = decoded.split('<tool_call>')[-1].replace('</tool_call>', '').strip()
+        elif 'xlam' in self.model_name.lower() and '"name":' in decoded and 'arguments":' in decoded:
+            if decoded.startswith('[{') and decoded.endswith('}]'):
+                tool_content = decoded[1:-1]
+            elif decoded.startswith('```json') and decoded.endswith('```'):
+                tool_content = decoded[8:-4].strip()
+        elif 'gemma-3' in self.model_name.lower() and '{"name":' in decoded and 'arguments":' in decoded:
+            if decoded.startswith('```json') and decoded.endswith('```'):
+                tool_content = decoded[8:-4].strip()
+
+        if tool_content is not None:
             try:
                 # json.loads로 감싸지 않은 경우도 있을 수 있음
                 tool_json = json.loads(tool_content)
@@ -468,11 +491,13 @@ class LocalModelAPI(AbstractModelAPIExecutor):
                 tool_json = tool_content  # fallback
 
             tool_calls = [{
-                'id': "qwen3-functioncall-random-id",
+                'id': f"{self.model_name}-functioncall-random-id",
                 'function': tool_json, 
                 'type': "function",
                 'index': None
             }]
+        if tool_calls is None and 'qwen3' in self.model_name.lower():   # Qwen3-style think 태그 제거
+            decoded = decoded.split("</think>")[-1].strip()
 
         return {
             "role": "assistant",
@@ -481,7 +506,7 @@ class LocalModelAPI(AbstractModelAPIExecutor):
             "function_call": None,
             "name": None
         }
-
+    
 
 class VLLMModelAPI(AbstractModelAPIExecutor):
     def __init__(self, model, model_path):
@@ -491,28 +516,57 @@ class VLLMModelAPI(AbstractModelAPIExecutor):
                        dtype=torch.bfloat16,
                        tensor_parallel_size=2) # gpu 개수
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, trust_remote_code=True)
+        self.model_name = model
 
     def predict(self, api_request):
-        messages = api_request["messages"]
+        messages = api_request['messages']
         tools = [tool['function'] for tool in api_request['tools']]
-
-        # vLLM에서는 문자열 형태로 prompt를 생성해야 함
-        prompt = self.tokenizer.apply_chat_template(
-            messages,
-            tools=tools,
-            add_generation_prompt=True,
-            tokenize=False
-        )
-
+        if 'gemma-3' in self.model_name.lower():
+            tool_prompt = '''Here is a list of functions in JSON format that you can invoke.
+{functions}
+When using tools, make calls in a JSON format:
+{{"name": "tool_call_name", "arguments": {{"arg1": "value1", "arg2": "value2"}}}}, ... (additional parallel tool calls as needed)'''
+            messages[0]['content'] += tool_prompt.format(functions=tools)
+            messages = convert_system_prompt_into_user_prompt(messages)
+            messages = combine_consecutive_user_prompts(messages)
+            prompt = self.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=False
+            )
+        else:
+            prompt = self.tokenizer.apply_chat_template(
+                messages,
+                tools=tools,
+                add_generation_prompt=True,
+                tokenize=False
+            )
+        
         # Generate with vLLM
-        sampling_params = SamplingParams(temperature=0.0, max_tokens=4096)
+        sampling_params = SamplingParams(temperature=0.0, max_tokens=20480)
         outputs = self.llm.generate(prompt, sampling_params, use_tqdm=False)
         decoded = outputs[0].outputs[0].text.strip()
-
-        # Qwen3-style tool call 처리
+        
+        # {"name": "get_weather", "arguments": {"location": "London", "unit": "celsius"}}
         tool_calls = None
-        if '<tool_call>' in decoded:
+        tool_content = None
+
+        if '<tool_call>' in decoded:    # Qwen3, etc.
             tool_content = decoded.split('<tool_call>')[-1].replace('</tool_call>', '').strip()
+        elif 'xlam' in self.model_name.lower() and '"name":' in decoded and 'arguments":' in decoded:
+            if decoded.startswith('[{') and decoded.endswith('}]'):
+                tool_content = decoded[1:-1]
+            elif decoded.startswith('```json') and decoded.endswith('```'):
+                tool_content = decoded[8:-4].strip()
+            else:
+                tool_content = decoded
+        elif 'gemma-3' in self.model_name.lower() and '"name":' in decoded and 'arguments":' in decoded:
+            if decoded.startswith('```json') and decoded.endswith('```'):
+                tool_content = decoded[8:-4].strip()
+            else:
+                tool_content = decoded
+
+        if tool_content is not None:
             try:
                 # json.loads로 감싸지 않은 경우도 있을 수 있음
                 tool_json = json.loads(tool_content)
@@ -522,14 +576,13 @@ class VLLMModelAPI(AbstractModelAPIExecutor):
                 tool_json = tool_content  # fallback
 
             tool_calls = [{
-                'id': "qwen3-functioncall-random-id",
-                'function': tool_json,
+                'id': f"{self.model_name}-functioncall-random-id",
+                'function': tool_json, 
                 'type': "function",
                 'index': None
             }]
-        
-        else:
-            decoded = decoded.split("</think>")[-1].strip()  # Qwen3-style think 태그 제거
+        if tool_calls is None and 'qwen3' in self.model_name.lower():   # Qwen3-style think 태그 제거
+            decoded = decoded.split("</think>")[-1].strip()
 
         return {
             "role": "assistant",
@@ -578,7 +631,7 @@ class APIExecutorFactory:
             return MistralModelAPI(model_name, api_key)
         elif model_name.startswith('gemini'):  # Google developed model
             return GeminiModelAPI(model_name, gcloud_project_id=gcloud_project_id, gcloud_location=gcloud_location)
-        elif model_name.startswith('vllm'): # local model: vLLM
+        elif model_name.lower().startswith('vllm'): # local model: vLLM
             print("Load local model with vLLM: ", model_name)
             return VLLMModelAPI(model_name, model_path)
         else:

@@ -100,3 +100,33 @@ def create_directory_if_not_exists(directory_path):
         print(f"Directory '{directory_path}' created successfully or already exists.")
     except Exception as e:
         print(f"Failed to create directory '{directory_path}'. Error: {e}")
+
+
+# from gorilla
+def convert_system_prompt_into_user_prompt(prompts: list[dict]) -> list[dict]:
+    """
+    Some FC models doesn't support system prompt in the message field, so we turn it into user prompt
+    """
+    for prompt in prompts:
+        if prompt["role"] == "system":
+            prompt["role"] = "user"
+    return prompts
+
+
+def combine_consecutive_user_prompts(prompts: list[dict]) -> list[dict]:
+    """
+    Some models require the prompt to be alternating between user and assistant.
+    We combine consecutive user prompts into a single user prompt.
+    """
+    combined_prompts = []
+    for prompt in prompts:
+        if (
+            prompt["role"] == "user"
+            and combined_prompts
+            and combined_prompts[-1]["role"] == "user"
+        ):
+            combined_prompts[-1]["content"] += "\n\n" + prompt["content"]
+        else:
+            combined_prompts.append(prompt)
+
+    return combined_prompts
