@@ -1,5 +1,50 @@
 # FunctionChat-Bench: Comprehensive Evaluation of Language Model's Generative Capabilities in Korean Tool-use Dialogs
 
+## (추가) 사용법
+1. 코드 다운받기: https://github.com/HyezNee/FunctionChat-Bench
+    - 원본 깃헙 다운 ㄴㄴ 수정 버전은 이 저장소에 있음
+2. 환경 세팅
+    - python≤3.11 이어야 하는 것 같다. (더 높을 경우 numpy 설치하는 데 에러남)
+    - 빠른 inference를 위해 **vllm** 설치
+        - vllm 설치 시 single call (500건) 20분, 안 하면 1시간 30분 이상
+3. `FunctionChat-Bench/config/openai.cfg` 을 아래와 같이 수정
+    
+    ```python
+    {
+      "api_type": "openai",
+      "api_key": "your-api-key",
+      "api_version": "gpt-4o",
+      "temperature": 0.1, 
+      "max_tokens": 4096, 
+      "n": 3
+    }
+    ```
+    
+4. generation command (예시: Qwen3-8B 모델) w/ vLLM
+   ```bash
+   # run singlecall evaluation
+    python3 evaluate.py singlecall \
+    --input_path data/FunctionChat-Singlecall.jsonl \
+    --tools_type all \
+    --system_prompt_path data/system_prompt.txt \
+    --temperature 0.1 \
+    --model vllm_Qwen3-8B \
+    --api_key your-openai-api-key \
+    --model_path Qwen/Qwen3-8B
+    ```
+- vLLM으로 하고 싶은 경우 `model_path`는 그대로, model 앞에 `vllm_`을 붙여 주면 된다
+5. response를 jsonl 파일로 생성 후 이걸 기반으로 평가 시작
+
+
+## (추가) 데이터셋
+- `data`: 원래 데이터셋
+- `data_eng`: 영어로 번역
+- `data_merged`: 영+한 합본
+
+**`input_path`와 `system_prompt_path` 인자를 바꿔서 사용할 것!!**
+
+---
+
 ## Introduction
 
 The FunctionChat-Bench is a benchmark dataset specifically designed to evaluate the Tool-Use (Function Calling) capabilities of Language Models within conversational settings.
