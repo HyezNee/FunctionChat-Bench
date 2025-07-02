@@ -32,6 +32,9 @@
     --api_key your-openai-api-key \
     --model_path Qwen/Qwen3-8B
     ```
+- 이 때 `temperature`: 생성 모델의 temperature가 아닌, 평가 모델 (gpt)의 temperature임!
+- `model`에는 `model_path`에서 **/** 뒷부분을 넣어주자. (권장)
+      - 주의! `/`가 들어갈 경우 에러가 난다!
 - vLLM으로 하고 싶은 경우 `model_path`는 그대로, model 앞에 `vllm_`을 붙여 주면 된다
 5. response를 jsonl 파일로 생성 후 이걸 기반으로 평가 시작
 
