@@ -462,7 +462,7 @@ When using tools, make calls in a JSON format:
         input_ids_len = inputs["input_ids"].shape[-1] # Get the length of the input tokens
         inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
-        outputs = self.model.generate(**inputs, max_new_tokens=20480)
+        outputs = self.model.generate(**inputs, max_new_tokens=2048)
         generated_tokens = outputs[:, input_ids_len:] # Slice the output to get only the newly generated tokens
         decoded = self.tokenizer.decode(generated_tokens[0], skip_special_tokens=True)
         
@@ -543,7 +543,7 @@ When using tools, make calls in a JSON format:
             )
         
         # Generate with vLLM
-        sampling_params = SamplingParams(temperature=0.0, max_tokens=20480)
+        sampling_params = SamplingParams(temperature=0.0, max_tokens=2048)
         outputs = self.llm.generate(prompt, sampling_params, use_tqdm=False)
         decoded = outputs[0].outputs[0].text.strip()
         
