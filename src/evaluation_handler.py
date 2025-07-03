@@ -127,11 +127,11 @@ class EvaluationHandler:
                 acceptable_arguments = json.loads(f'"{acceptable_arguments}"')
         if acceptable_arguments is None:
             return {}
-        if acceptable_arguments == "Only ground truth is allowed.":
+        if isinstance(acceptable_arguments, str) and acceptable_arguments.lower() == "only ground truth is allowed.":
             return {}
-        if acceptable_arguments == "The date should be expressed as 'tomorrow'. A specific date should not be designated.":
+        if isinstance(acceptable_arguments, str) and acceptable_arguments.lower() == "the date should be expressed as 'tomorrow'. a specific date should not be designated.":
             return {}
-        if acceptable_arguments == "Since the user did not mention a specific year, it will fail if the date was created including the year in the submission.":
+        if isinstance(acceptable_arguments, str) and acceptable_arguments.lower() == "since the user did not mention a specific year, it will fail if the date was created including the year in the submission.":
             return {}
         if isinstance(acceptable_arguments, str):
             acceptable_arguments = json.loads(acceptable_arguments)
