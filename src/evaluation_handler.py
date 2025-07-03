@@ -202,8 +202,12 @@ class EvaluationHandler:
         diff_case_msg = ''
         if predict_tools and len(predict_tools) > 0:
             p_tool = predict_tools[0].get('function', {})
-            p_func_name = p_tool.get('name')
-            p_func_args = p_tool.get('arguments')
+            try:
+                p_func_name = p_tool.get('name')
+                p_func_args = p_tool.get('arguments')
+            except AttributeError:
+                p_func_name = ''
+                p_func_args = ''
             if g_func_name == p_func_name:
                 if self.compare_arguments(g_func_args, p_func_args, acceptable_arguments):
                     is_pass = "pass"
