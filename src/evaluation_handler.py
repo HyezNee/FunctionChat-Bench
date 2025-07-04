@@ -124,14 +124,22 @@ class EvaluationHandler:
             try:
                 acceptable_arguments = json.loads(acceptable_arguments)
             except Exception:
-                acceptable_arguments = json.loads(f'"{acceptable_arguments}"')
+                if acceptable_arguments == '{"location":["서귀포시","서귀포"]} ({"location":["서귀포시","서귀포"]})':
+                # handle special case where acceptable_arguments is a string that looks like a JSON
+                    acceptable_arguments = json.loads('{"location":["서귀포시","서귀포"]}')
+                else:
+                    acceptable_arguments = json.loads(f'"{acceptable_arguments}"')
         if acceptable_arguments is None:
             return {}
-        if isinstance(acceptable_arguments, str) and acceptable_arguments.lower() == "only ground truth is allowed.":
+        if isinstance(acceptable_arguments, str) and "only ground truth is allowed." in acceptable_arguments.lower():
             return {}
-        if isinstance(acceptable_arguments, str) and acceptable_arguments.lower() == "the date should be expressed as 'tomorrow'. a specific date should not be designated.":
+        if isinstance(acceptable_arguments, str) and "the date should be expressed as 'tomorrow'. a specific date should not be designated." in acceptable_arguments.lower():
             return {}
-        if isinstance(acceptable_arguments, str) and acceptable_arguments.lower() == "since the user did not mention a specific year, it will fail if the date was created including the year in the submission.":
+        if isinstance(acceptable_arguments, str) and "since the user did not mention a specific year, it will fail if the date was created including the year in the submission." in acceptable_arguments.lower():
+            return {}
+        if isinstance(acceptable_arguments, str) and "since the noser did not mention a special fail if the date was created including the year in the submission." in acceptable_arguments.lower():
+            return {}
+        if isinstance(acceptable_arguments, str) and "the date should be expressed as __protect_0__. a specificate date should not be designated." in acceptable_arguments.lower():
             return {}
         if isinstance(acceptable_arguments, str):
             acceptable_arguments = json.loads(acceptable_arguments)
