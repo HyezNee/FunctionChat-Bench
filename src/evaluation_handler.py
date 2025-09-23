@@ -142,7 +142,10 @@ class EvaluationHandler:
         if isinstance(acceptable_arguments, str) and "the date should be expressed as __protect_0__. a specificate date should not be designated." in acceptable_arguments.lower():
             return {}
         if isinstance(acceptable_arguments, str):
-            acceptable_arguments = json.loads(acceptable_arguments)
+            try:
+                acceptable_arguments = json.loads(acceptable_arguments)
+            except Exception:
+                acceptable_arguments = {}
         return acceptable_arguments
 
     def compare_arguments(self, g_func_args, p_func_args, acceptable_arguments):

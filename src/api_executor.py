@@ -325,6 +325,7 @@ class InhouseModelAPI(AbstractModelAPIExecutor):
                     messages=api_request['messages'],
                     tools=api_request['tools']
                 )
+                print(">> response *", json.dumps(response, ensure_ascii=False))
                 response = response.model_dump()
             except Exception as e:
                 print(f".. retry api call .. {try_cnt}")
@@ -472,6 +473,8 @@ When using tools, make calls in a JSON format:
 
         if '<tool_call>' in decoded:    # Qwen3, etc.
             tool_content = decoded.split('<tool_call>')[-1].replace('</tool_call>', '').strip()
+        elif 'HyperCLOVAX-SEED-Think-14B' in self.model_name and '"name":' in decoded and 'arguments":' in decoded:
+            decoded = decoded.split(' -> tool/function_call\n')[-1].strip()
         elif 'xlam' in self.model_name.lower() and '"name":' in decoded and 'arguments":' in decoded:
             if decoded.startswith('[{') and decoded.endswith('}]'):
                 tool_content = decoded[1:-1]
@@ -496,7 +499,7 @@ When using tools, make calls in a JSON format:
                 'type': "function",
                 'index': None
             }]
-        if tool_calls is None and 'qwen3' in self.model_name.lower():   # Qwen3-style think 태그 제거
+        if tool_calls is None and 'qwen' in self.model_name.lower():   # Qwen3-style think 태그 제거
             decoded = decoded.split("</think>")[-1].strip()
 
         return {
@@ -514,13 +517,17 @@ class VLLMModelAPI(AbstractModelAPIExecutor):
         self.model_path = model_path
         self.llm = LLM(model=self.model_path,
                        dtype=torch.bfloat16,
-                       tensor_parallel_size=2) # gpu 개수
+                       tensor_parallel_size=1,
+                       trust_remote_code=True) # gpu 개수
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, trust_remote_code=True)
         self.model_name = model
 
     def predict(self, api_request):
         messages = api_request['messages']
-        tools = [tool['function'] for tool in api_request['tools']]
+        if 'HyperCLOVAX-SEED-Think-14B' in self.model_name or 'HyperCLOVAX-SEED-Text-Instruct-1.5B' in self.model_name:
+            tools = api_request['tools']
+        else:
+            tools = [tool['function'] for tool in api_request['tools']]
         if 'gemma-3' in self.model_name.lower():
             tool_prompt = '''Here is a list of functions in JSON format that you can invoke.
 {functions}
@@ -534,6 +541,28 @@ When using tools, make calls in a JSON format:
                 add_generation_prompt=True,
                 tokenize=False
             )
+        elif 'HyperCLOVAX-SEED-Text-Instruct-1.5B' in self.model_name:
+            tool_prompt = """- AI 언어모델의 이름은 \"CLOVA X\" 이며 네이버에서 만들었다.\n- 오늘은 2025년 04월 24일(목)이다.
+tool_list 목록을 참고하여, 사용자가 요청한 작업을 수행하는데 적합한 function이 있다면, 해당 function을 호출하는 JSON 형식의 응답을 생성하세요.
+응답은 다음과 같은 형식으로 생성해야 합니다: {"name": function name, "arguments": dictionary of argument name and its value}.
+JSON 응답 외에 다른 텍스트는 포함하지 마세요. ```json도 앞에 붙이지 마세요.
+만약 적합한 function이 없다면, 사용자의 요청에 대한 직접적인 답변을 생성하세요."""
+            messages[0]['content'] += tool_prompt
+            messages = [{"role": "tool_list", "content": json.dumps(tools, ensure_ascii=False)}] + messages
+            prompt = self.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=False
+            )
+        elif 'qwen' in self.model_name.lower():
+            prompt = self.tokenizer.apply_chat_template(
+                messages,
+                tools=tools,
+                enable_thinking=False,
+                add_generation_prompt=True,
+                tokenize=False
+            )
+            print(prompt)
         else:
             prompt = self.tokenizer.apply_chat_template(
                 messages,
@@ -543,7 +572,10 @@ When using tools, make calls in a JSON format:
             )
         
         # Generate with vLLM
-        sampling_params = SamplingParams(temperature=0.0, max_tokens=2048)
+        _stop_token_ids = []
+        if 'HyperCLOVAX' in self.model_name:
+            _stop_token_ids = [100273, 100274, 100275]
+        sampling_params = SamplingParams(temperature=0.0, max_tokens=2048, stop_token_ids=_stop_token_ids)
         outputs = self.llm.generate(prompt, sampling_params, use_tqdm=False)
         decoded = outputs[0].outputs[0].text.strip()
         
@@ -553,6 +585,12 @@ When using tools, make calls in a JSON format:
 
         if '<tool_call>' in decoded:    # Qwen3, etc.
             tool_content = decoded.split('<tool_call>')[-1].replace('</tool_call>', '').strip()
+        elif 'HyperCLOVAX-SEED-Think-14B' in self.model_name and '"name":' in decoded and 'arguments":' in decoded:
+            decoded = decoded.split('-> tool/function_call\n')[-1].strip()
+            if decoded.startswith('[{') and decoded.endswith('}]'):
+                tool_content = decoded[1:-1]
+            else:
+                tool_content = decoded
         elif 'xlam' in self.model_name.lower() and '"name":' in decoded and 'arguments":' in decoded:
             if decoded.startswith('[{') and decoded.endswith('}]'):
                 tool_content = decoded[1:-1]
@@ -565,6 +603,14 @@ When using tools, make calls in a JSON format:
                 tool_content = decoded[8:-4].strip()
             else:
                 tool_content = decoded
+        elif 'HyperCLOVAX-SEED-Text-Instruct-1.5B' in self.model_name and '"name":' in decoded and 'arguments":' in decoded:
+            if decoded.startswith('```json') and decoded.endswith('```'):
+                tool_content = decoded[8:-4].strip()
+            else:
+                tool_content = decoded
+            print(decoded)
+            print(tool_content)
+            
 
         if tool_content is not None:
             try:
@@ -581,7 +627,7 @@ When using tools, make calls in a JSON format:
                 'type': "function",
                 'index': None
             }]
-        if tool_calls is None and 'qwen3' in self.model_name.lower():   # Qwen3-style think 태그 제거
+        if tool_calls is None and 'qwen' in self.model_name.lower():   # Qwen3-style think 태그 제거
             decoded = decoded.split("</think>")[-1].strip()
 
         return {
