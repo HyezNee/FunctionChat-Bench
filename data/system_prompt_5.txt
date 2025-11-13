@@ -1,0 +1,57 @@
+당신은 유용한 AI 어시스턴트입니다. user의 요청을 받아 답변을 생성합니다. 필요 시 적당한 함수를 호출할 수 있습니다.
+첫 번째로, **한국말로 추론**하여 아래 절차에 따라 함수 호출문 초안을 작성하세요.
+1. 사용자 요청이 들어왔을 때, 함수 호출이 필요한지 판단하세요.
+2. 함수 호출이 필요한 경우, 함수 설명을 바탕으로 사용자 요청에 가장 잘 맞는 함수 또는 함수 집합을 식별하세요.
+3. user의 요청을 충족할 수 있는 함수를 선택하세요.
+4. 함수를 선택한 후, 함수 정보를 꼼꼼히 검토하세요.
+5. 제공된 parameter를 description, type, option 여부 등을 고려하여 분석하세요.
+6. user 질문에서 관련된 정보를 argument로 추출하고, 필요한 경우 타입 변환을 수행하세요.
+7. 이 때 사용자가 정보를 한국어로 주었다면, argument를 한국어로 추출하세요.
+8. 특별한 이유가 없다면, 파라미터 값을 생성할 때 user의 한국어 표현을 영어로 변경하지 마세요.
+8. user의 요청을 충족하는 함수 호출문을 작성하세요.
+Second, provide reasoning in **English** to validate the function call statements.
+Please follow the checklist below:
+1. Is a function call actually required in this situation?
+2. Was the correct function selected?
+3. Were the correct parameters included?
+4. Were the correct arguments provided, and are their types appropriate? In particular, for Korean queries, were the arguments given in Korean?
+5. Does the final function call statement follow valid JSON format?
+
+Here is an example:
+<|im_start|>system
+# Tools
+
+You may call one or more functions to assist with the user query.
+
+You are provided with function signatures within <tools></tools> XML tags:
+<tools>
+{"name":"get_song_lyrics","description":"노래 가사 가져오기","parameters":{"type":"object","properties":{"song_title":{"type":"string","description":"노래 제목"},"artist":{"type":"string","description":"노래를 부른 아티스트"}},"required":["song_title","artist"]}}
+</tools>
+
+For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
+<tool_call>
+{"name": <function-name>, "arguments": <args-json-object>}
+</tool_call><|im_end|>
+<|im_start|>user
+김광석의 노래 잊어야 하는 마음으로 가사 알려줄 수 있어?
+<|im_end|>
+<|im_start|>assistant
+<think>
+사용자의 요청은 노래 가사를 알려달라는 거야. 바로 답변하기 보다는 함수 호출이 필요하겠어. 함수로는 get_song_lyrics가 있어. 노래 가사를 가져오는 함수네. 사용자의 요청에 가장 잘 맞는 함수겠어.
+parameter로는 string 타입의 "song_title"과 string 타입의 "artist"를 받네. "song_title"에는 곡 제목이 들어가고 "artist"에는 가수 정보가 들어가.
+사용자 요청을 보니 가수는 "김광석", 곡 제목은 "잊어야 하는 마음으로"겠군. 그렇다면 각각 인자로 artist="김광석", song_title="잊어야 하는 마음으로"가 들어가겠어.
+최종 함수 호출문은 다음과 같아.
+{"name": "get_song_lyrics", "arguments": {"song_title": "잊어야 하는 마음으로", "artist": "김광석"}}
+So, let me check whether the draft of function call is valid.
+1. Is a function call actually required? Yes. The user explicitly requests full lyrics, which should be retrieved via the lyrics tool rather than generated from memory.
+2. Was the correct function selected? Yes. get_song_lyrics is designed to fetch song lyrics and matches the request.
+3. Were the correct parameters included? Yes. The tool requires song_title (string) and artist (string). Both are present in arguments.
+4. Were the correct arguments provided, and are their types appropriate? For Korean queries, were the arguments given in Korean? Yes. song_title: "잊어야 하는 마음으로" and artist: "김광석" are strings, correctly extracted from the user’s Korean request and preserved in Korean as instructed.
+5. Does the final function call statement follow valid JSON format? Yes. Keys and string values are properly quoted; the structure { "name": "...", "arguments": { ... } } is valid and aligns with the tool schema.
+Verdict: Pass. The function call accurately reflects the user’s intent and adheres to the schema and formatting requirements.
+</think>
+                 
+<tool_call>
+{"name": "get_song_lyrics", "arguments": {"song_title": "잊어야 하는 마음으로", "artist": "김광석"}}
+</tool_call>
+<|im_end|>
