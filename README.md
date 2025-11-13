@@ -47,6 +47,9 @@
 - `data_merged`: 영+한 합본
 
 **`input_path`와 `system_prompt_path` 인자를 바꿔서 사용할 것!!**
+- `data/system_prompt.txt`: 벤치마크에서 제공하는 시스템 프롬프트
+- `data/system_prompt_5.txt`: 성능이 가장 잘 나온 시스템 프롬프트
+- `data/system_prompt_4.txt`: 간단함 대비 성능이 가장 괜찮은 프롬프트 (SOTA에 대비 0.02차이)
 
 ---
 
