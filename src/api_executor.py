@@ -459,7 +459,7 @@ class Qwen3ModelAPI(AbstractModelAPIExecutor):
         self.port = find_free_port()
         self.host = "127.0.0.1"
         self.base_url = f"http://{self.host}:{self.port}"
-        self.max_tokens = 1024
+        self.max_tokens = 4096
 
         print(f"[vLLM] launching on {self.base_url} with model='{self.model}' ...")
         cmd = [
