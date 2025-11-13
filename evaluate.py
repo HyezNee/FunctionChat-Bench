@@ -20,6 +20,7 @@ from src.payload_creator import PayloadCreatorFactory
 from src.response_handler import ResponseHandler
 from src.evaluation_handler import EvaluationHandler
 
+from datetime import datetime
 
 REPO_PATH = os.path.dirname(os.path.abspath(__file__))
 
@@ -127,17 +128,22 @@ def singlecall(model,
         input_file_path=input_path, request_file_path=request_file_path,
         reset=reset, tools_type=tools_type
     )
+    # 시간 측정
+    start_time = datetime.now()
     api_response_list = ResponseHandler(
         model, api_key, base_url, model_path,
         gcloud_project_id, gcloud_location
     ).fetch_and_save(
         api_request_list, predict_file_path, reset, sample, debug
     )
-    EvaluationHandler(eval_type).evaluate(
-        api_request_list, api_response_list,
-        eval_file_path, eval_log_file_path,
-        reset, sample, debug, only_exact
-    )
+    end_time = datetime.now()
+    print("총 걸린 시간: ", end_time - start_time)
+    print("하나 inference 평균 시간: ", (end_time - start_time) / len(api_request_list))
+    # EvaluationHandler(eval_type).evaluate(
+    #     api_request_list, api_response_list,
+    #     eval_file_path, eval_log_file_path,
+    #     reset, sample, debug, only_exact
+    # )
 
 
 @cli.command()

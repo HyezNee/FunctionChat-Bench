@@ -1,6 +1,9 @@
 import sys
 import json
 import openai
+import torch._dynamo
+
+torch._dynamo.config.cache_size_limit = 128
 
 from mistralai.client import MistralClient
 from mistralai.exceptions import MistralAPIException
@@ -10,7 +13,6 @@ import vertexai
 from src.openai_utils import retry_on_limit
 from src.gemini_utils import (
     convert_messages_gemini,
-    convert_tools_gemini,
     convert_gemini_to_response,
     call_gemini_model
 )
@@ -22,6 +24,8 @@ import torch
 from vllm import LLM, SamplingParams
 from .utils import convert_system_prompt_into_user_prompt, combine_consecutive_user_prompts
 
+from transformers import pipeline
+import ast, re  
 
 class AbstractModelAPIExecutor:
     """
@@ -49,6 +53,7 @@ class AbstractModelAPIExecutor:
         Raises a NotImplementedError if called on an instance of this abstract class.
         """
         raise NotImplementedError("Subclasses must implement this method.")
+    
 
 
 class OpenaiModelAzureAPI(AbstractModelAPIExecutor):
@@ -325,7 +330,6 @@ class InhouseModelAPI(AbstractModelAPIExecutor):
                     messages=api_request['messages'],
                     tools=api_request['tools']
                 )
-                print(">> response *", json.dumps(response, ensure_ascii=False))
                 response = response.model_dump()
             except Exception as e:
                 print(f".. retry api call .. {try_cnt}")
@@ -435,12 +439,10 @@ class GeminiModelAPI(AbstractModelAPIExecutor):
                 break
         return response_output
 
-
-
 class LocalModelAPI(AbstractModelAPIExecutor):
     def __init__(self, model, model_path):
         super().__init__(model, None)
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
         self.model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.bfloat16, device_map="auto")
         self.model.eval()
         self.model_name = model
@@ -473,8 +475,6 @@ When using tools, make calls in a JSON format:
 
         if '<tool_call>' in decoded:    # Qwen3, etc.
             tool_content = decoded.split('<tool_call>')[-1].replace('</tool_call>', '').strip()
-        elif 'HyperCLOVAX-SEED-Think-14B' in self.model_name and '"name":' in decoded and 'arguments":' in decoded:
-            decoded = decoded.split(' -> tool/function_call\n')[-1].strip()
         elif 'xlam' in self.model_name.lower() and '"name":' in decoded and 'arguments":' in decoded:
             if decoded.startswith('[{') and decoded.endswith('}]'):
                 tool_content = decoded[1:-1]
@@ -499,7 +499,7 @@ When using tools, make calls in a JSON format:
                 'type': "function",
                 'index': None
             }]
-        if tool_calls is None and 'qwen' in self.model_name.lower():   # Qwen3-style think 태그 제거
+        if tool_calls is None and 'qwen4b' in self.model_name.lower():   # Qwen3-style think 태그 제거
             decoded = decoded.split("</think>")[-1].strip()
 
         return {
@@ -519,15 +519,14 @@ class VLLMModelAPI(AbstractModelAPIExecutor):
                        dtype=torch.bfloat16,
                        tensor_parallel_size=1,
                        trust_remote_code=True) # gpu 개수
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, trust_remote_code=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, trust_remote_code=True, local_files_only=True) # vanilla ver.
+        # self.tokenizer = AutoTokenizer.from_pretrained("/home/znkoni/project/mcp/0724/tokenizer/qwen3_tokenizer_new", trust_remote_code=True) # custom ver.
+        # self.tokenizer = AutoTokenizer.from_pretrained("/home/znkoni/project/mcp/0807/tokenizer_custom_re/gemma3_tokenizer_new", trust_remote_code=True) # custom_new ver.
         self.model_name = model
 
     def predict(self, api_request):
         messages = api_request['messages']
-        if 'HyperCLOVAX-SEED-Think-14B' in self.model_name or 'HyperCLOVAX-SEED-Text-Instruct-1.5B' in self.model_name:
-            tools = api_request['tools']
-        else:
-            tools = [tool['function'] for tool in api_request['tools']]
+        tools = [tool['function'] for tool in api_request['tools']]
         if 'gemma-3' in self.model_name.lower():
             tool_prompt = '''Here is a list of functions in JSON format that you can invoke.
 {functions}
@@ -541,29 +540,51 @@ When using tools, make calls in a JSON format:
                 add_generation_prompt=True,
                 tokenize=False
             )
-        elif 'HyperCLOVAX-SEED-Text-Instruct-1.5B' in self.model_name:
-            tool_prompt = """- AI 언어모델의 이름은 \"CLOVA X\" 이며 네이버에서 만들었다.\n- 오늘은 2025년 04월 24일(목)이다.
-tool_list 목록을 참고하여, 사용자가 요청한 작업을 수행하는데 적합한 function이 있다면, 해당 function을 호출하는 JSON 형식의 응답을 생성하세요.
-응답은 다음과 같은 형식으로 생성해야 합니다: {"name": function name, "arguments": dictionary of argument name and its value}.
-JSON 응답 외에 다른 텍스트는 포함하지 마세요. ```json도 앞에 붙이지 마세요.
-만약 적합한 function이 없다면, 사용자의 요청에 대한 직접적인 답변을 생성하세요."""
-            messages[0]['content'] += tool_prompt
-            messages = [{"role": "tool_list", "content": json.dumps(tools, ensure_ascii=False)}] + messages
-            prompt = self.tokenizer.apply_chat_template(
-                messages,
-                add_generation_prompt=True,
-                tokenize=False
-            )
-        elif 'qwen' in self.model_name.lower():
-            prompt = self.tokenizer.apply_chat_template(
-                messages,
-                tools=tools,
-                enable_thinking=False,
-                add_generation_prompt=True,
-                tokenize=False
-            )
-            print(prompt)
         else:
+            shot = [
+                {"role": "user", "content": "김광석의 노래 잊어야 하는 마음으로 가사 알려줄 수 있어?"},
+                {"role": "assistant", "content": """<think>
+사용자의 요청은 노래 가사를 알려달라는 거야. 바로 답변하기 보다는 함수 호출이 필요하겠어. 함수로는 get_song_lyrics가 있어. 노래 가사를 가져오는 함수네. 사용자의 요청에 가장 잘 맞는 함수겠어.
+parameter로는 string 타입의 "song_title"과 string 타입의 "artist"를 받네. "song_title"에는 곡 제목이 들어가고 "artist"에는 가수 정보가 들어가.
+사용자 요청을 보니 가수는 "김광석", 곡 제목은 "잊어야 하는 마음으로"겠군. 그렇다면 각각 인자로 artist="김광석", song_title="잊어야 하는 마음으로"가 들어가겠어.
+최종 함수 호출문은 다음과 같아.
+{"name": "get_song_lyrics", "arguments": {"song_title": "잊어야 하는 마음으로", "artist": "김광석"}}
+So, let me check whether the draft of function call is valid.
+1. Is a function call actually required? Yes. The user explicitly requests full lyrics, which should be retrieved via the lyrics tool rather than generated from memory.
+2. Was the correct function selected? Yes. get_song_lyrics is designed to fetch song lyrics and matches the request.
+3. Were the correct parameters included? Yes. The tool requires song_title (string) and artist (string). Both are present in arguments.
+4. Were the correct arguments provided, and are their types appropriate? For Korean queries, were the arguments given in Korean? Yes. song_title: "잊어야 하는 마음으로" and artist: "김광석" are strings, correctly extracted from the user’s Korean request and preserved in Korean as instructed.
+5. Does the final function call statement follow valid JSON format? Yes. Keys and string values are properly quoted; the structure { "name": "...", "arguments": { ... } } is valid and aligns with the tool schema.
+Verdict: Pass. The function call accurately reflects the user’s intent and adheres to the schema and formatting requirements.
+</think>
+                 
+<tool_call>
+{"name": "get_song_lyrics", "arguments": {"song_title": "잊어야 하는 마음으로", "artist": "김광석"}}
+</tool_call>"""}
+            ]
+            shot_tools = [
+    {
+    "name": "get_song_lyrics",
+    "description": "노래 가사 가져오기",
+    "parameters": {
+        "type": "object",
+        "properties": {"song_title": {"type": "string", "description": "노래 제목"}, "artist": {"type": "string", "description": "노래를 부른 아티스트"}},
+        "required": [
+        "song_title",
+        "artist"
+        ]
+    }
+    }
+]
+            # shot_prompt = self.tokenizer.apply_chat_template(
+            #     shot,
+            #     shot_tools,
+            #     add_generation_prompt=True,
+            #     tokenize=False
+            # )
+
+            # messages[0]['content'] += shot_prompt
+
             prompt = self.tokenizer.apply_chat_template(
                 messages,
                 tools=tools,
@@ -572,10 +593,7 @@ JSON 응답 외에 다른 텍스트는 포함하지 마세요. ```json도 앞에
             )
         
         # Generate with vLLM
-        _stop_token_ids = []
-        if 'HyperCLOVAX' in self.model_name:
-            _stop_token_ids = [100273, 100274, 100275]
-        sampling_params = SamplingParams(temperature=0.0, max_tokens=2048, stop_token_ids=_stop_token_ids)
+        sampling_params = SamplingParams(temperature=0.0, max_tokens=4096)
         outputs = self.llm.generate(prompt, sampling_params, use_tqdm=False)
         decoded = outputs[0].outputs[0].text.strip()
         
@@ -583,51 +601,57 @@ JSON 응답 외에 다른 텍스트는 포함하지 마세요. ```json도 앞에
         tool_calls = None
         tool_content = None
 
-        if '<tool_call>' in decoded:    # Qwen3, etc.
-            tool_content = decoded.split('<tool_call>')[-1].replace('</tool_call>', '').strip()
-        elif 'HyperCLOVAX-SEED-Think-14B' in self.model_name and '"name":' in decoded and 'arguments":' in decoded:
-            decoded = decoded.split('-> tool/function_call\n')[-1].strip()
-            if decoded.startswith('[{') and decoded.endswith('}]'):
-                tool_content = decoded[1:-1]
-            else:
-                tool_content = decoded
-        elif 'xlam' in self.model_name.lower() and '"name":' in decoded and 'arguments":' in decoded:
-            if decoded.startswith('[{') and decoded.endswith('}]'):
-                tool_content = decoded[1:-1]
-            elif decoded.startswith('```json') and decoded.endswith('```'):
-                tool_content = decoded[8:-4].strip()
-            else:
-                tool_content = decoded
-        elif 'gemma-3' in self.model_name.lower() and '"name":' in decoded and 'arguments":' in decoded:
-            if decoded.startswith('```json') and decoded.endswith('```'):
-                tool_content = decoded[8:-4].strip()
-            else:
-                tool_content = decoded
-        elif 'HyperCLOVAX-SEED-Text-Instruct-1.5B' in self.model_name and '"name":' in decoded and 'arguments":' in decoded:
-            if decoded.startswith('```json') and decoded.endswith('```'):
-                tool_content = decoded[8:-4].strip()
-            else:
-                tool_content = decoded
-            print(decoded)
-            print(tool_content)
-            
+        # 1. Qwen 스타일 태그 기반 추출
+        if "<tool_call>" in decoded and "</tool_call>" in decoded:
+            tool_content = decoded.split("<tool_call>")[-1].split("</tool_call>")[0].strip()
+        # 2. 일반 JSON 객체 추정 패턴 (큰따옴표 우선)
+        elif re.search(r'\{ *"name" *:.*"arguments" *:', decoded):
+            match = re.search(r'(\{ *"name" *:.*"arguments" *:.*\})', decoded, re.DOTALL)
+            if match:
+                tool_content = match.group(1).strip()
 
+        # 3. 작은따옴표 (Python literal) 패턴도 fallback
+        elif re.search(r"\{ *'name' *:.*'arguments' *:", decoded):
+            match = re.search(r"(\{ *'name' *:.*'arguments' *:.*\})", decoded, re.DOTALL)
+            if match:
+                tool_content = match.group(1).strip()
+
+        # elif 'xlam' in self.model_name.lower() and '"name":' in decoded and 'arguments":' in decoded:
+        #     if decoded.startswith('[{') and decoded.endswith('}]'):
+        #         tool_content = decoded[1:-1]
+        #     elif decoded.startswith('```json') and decoded.endswith('```'):
+        #         tool_content = decoded[8:-4].strip()
+        #     else:
+        #         tool_content = decoded
+        # elif 'gemma-3' in self.model_name.lower() and '"name":' in decoded and 'arguments":' in decoded:
+        #     if decoded.startswith('```json') and decoded.endswith('```'):
+        #         tool_content = decoded[8:-4].strip()
+        #     else:
+        #         tool_content = decoded
+
+        tool_json = None
         if tool_content is not None:
             try:
                 # json.loads로 감싸지 않은 경우도 있을 수 있음
                 tool_json = json.loads(tool_content)
-                # arguments 부분 str로 바꾸기
-                tool_json['arguments'] = json.dumps(tool_json['arguments'], ensure_ascii=False)
-            except Exception:
-                tool_json = tool_content  # fallback
+            except json.JSONDecodeError:
+                try:
+                    tool_json = ast.literal_eval(tool_content) # 작은 따옴 같이 json 형식을 따르지 않는 경우
+                except Exception:
+                    tool_json = None
+            
+            if tool_json is not None and isinstance(tool_json, dict):
+                # arguments가 dict면 JSON 문자열 반환
+                # tool_json['arguments'] = json.dumps(tool_json['arguments'], ensure_ascii=False)
 
-            tool_calls = [{
-                'id': f"{self.model_name}-functioncall-random-id",
-                'function': tool_json, 
-                'type': "function",
-                'index': None
-            }]
-        if tool_calls is None and 'qwen' in self.model_name.lower():   # Qwen3-style think 태그 제거
+                tool_calls = [{
+                    'id': f"{self.model_name}-functioncall-random-id",
+                    'function': tool_json, 
+                    'type': "function",
+                    'index': None
+                }]
+
+        if tool_calls is None and 'qwen3' in self.model_name.lower():   # Qwen3-style think 태그 제거
             decoded = decoded.split("</think>")[-1].strip()
 
         return {
@@ -680,6 +704,111 @@ class APIExecutorFactory:
         elif model_name.lower().startswith('vllm'): # local model: vLLM
             print("Load local model with vLLM: ", model_name)
             return VLLMModelAPI(model_name, model_path)
+        elif model_name.lower().startswith('exaone'):  # EXAONE developed model
+            print("Load EXAONE model: ", model_name)
+            return ExaoneModelAPI(model_name, model_path)
         else:
             print("Load local model: ", model_name)
             return LocalModelAPI(model_name, model_path)
+
+
+class ExaoneModelAPI(AbstractModelAPIExecutor):
+    def __init__(self, model, model_path):
+        super().__init__(model, None)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+            trust_remote_code=True,
+        ).eval()
+        self.model_name = model
+        self.system_prompt = None 
+
+
+    def predict(self, api_request):
+        messages = api_request["messages"]
+
+        sp = getattr(self, "system_prompt", None)
+        if sp \
+            and messages and messages[0].get("role")=="system" \
+            and messages[0].get("content","") == "":
+                messages[0]["content"] = sp
+
+        # 1) 래퍼 언박싱
+        raw_tools = api_request.get("tools", [])
+        tools = []
+        for t in raw_tools:
+            if isinstance(t, dict) and "function" in t:
+                tools.append(t["function"])
+            elif isinstance(t, dict) and "name" in t:
+                tools.append(t)
+
+        # 2) 프롬프트 생성
+        inputs = self.tokenizer.apply_chat_template(
+            messages,
+            tools=tools,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt",
+            enable_thinking=True # reasoning on/off
+        )
+        # '''def predict(self, api_request):
+        # messages = api_request['messages']
+        # tools = api_request.get('tools', [])
+
+        # inputs = self.tokenizer.apply_chat_template(
+        #     messages,
+        #     tools=tools,
+        #     add_generation_prompt=True,
+        #     return_dict=True,
+        #     return_tensors="pt",
+        #     enable_thinking = True # reasoning on/off
+        # ) '''
+        input_len = inputs['input_ids'].shape[-1]
+        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+
+        outputs = self.model.generate(
+            **inputs, 
+            max_new_tokens=2048, 
+            temperature=0.1,
+            top_p=0.95)
+        new_tokens = outputs[:, input_len:]
+        decoded = self.tokenizer.decode(new_tokens[0], skip_special_tokens=True)
+
+        # EXAONE은 tool_call 정보를 <tool_call>{...}</tool_call>로 생성
+        tool_calls, tool_content = None, None
+        if '<tool_call>' in decoded:
+            tool_content = decoded.split('<tool_call>')[-1].split('</tool_call>')[0].strip()
+            try:
+                tool_json = json.loads(tool_content)
+                tool_name = tool_json.get("name")
+                tool_args = tool_json.get("arguments", {})
+
+                # arguments가 빈 객체면 "{}"만 넘김
+                if isinstance(tool_args, dict) and tool_args == {}:
+                    tool_args_str = "{}"
+                else:
+                    tool_args_str = json.dumps(tool_args, ensure_ascii=False)
+
+                tool_calls = [{
+                    "id": f"{self.model_name}-tool-call",
+                    "function": {
+                        "name": tool_name,
+                        "arguments": tool_args_str
+                    },
+                    "type": "function",
+                    "index": None
+                }]
+            except Exception as e:
+                print(f"[WARN] Failed to parse tool_call: {e}")
+                tool_calls = None
+
+        return {
+            "role": "assistant",
+            "content": "" if tool_calls else decoded,
+            "tool_calls": tool_calls,
+            "function_call": None,
+            "name": None
+        }
+    
