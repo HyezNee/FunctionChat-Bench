@@ -4,9 +4,9 @@ python3 evaluate.py singlecall \
 --tools_type all \
 --system_prompt_path data/system_prompt_5.txt \
 --temperature 1.0 \
---model Qwen3-8B \
+--model Qwen3-4B \
 --api_key your-api-key \
---model_path Qwen/Qwen3-8B
+--model_path Qwen/Qwen3-4B
 
 # run dialog evaluation
 # python3 evaluate.py dialog \
