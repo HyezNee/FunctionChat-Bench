@@ -22,7 +22,7 @@
     }
     ```
     
-4. generation + evaluation command (Qwen3-8B 모델) w/ vLLM
+4. generation + evaluation command (Qwen3 모델) w/ vLLM
    ```bash
    # run singlecall evaluation
     python3 evaluate.py singlecall \
@@ -30,13 +30,14 @@
     --tools_type all \
     --system_prompt_path data/system_prompt.txt \
     --temperature 1.0 \
-    --model Qwen3-8B \
+    --model Qwen3-4B \
     --api_key your-openai-api-key \
     --model_path Qwen/Qwen3-8B
     ```
 - 이 때 `temperature`: 생성 모델의 temperature == 평가 모델 (gpt)의 temperature
 - `model`에는 `model_path`에서 **/** 뒷부분을 넣어주자. (권장) **주의! `/`가 들어갈 경우 에러가 난다!**
 - ~vLLM으로 하고 싶은 경우 `model_path`는 그대로, model 앞에 `vllm_`을 붙여 주면 된다~
+- 현재 Qwen 시리즈만 지원. 추가로 필요한 모델이 있을 경우 말씀해주시면 추가해보겠습니다.
 
 5. response를 jsonl 파일로 생성 후 이걸 기반으로 평가를 시작하는 구조. 도중에 stop해도 변경 사항이 저장됨
 
