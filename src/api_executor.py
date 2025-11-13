@@ -602,6 +602,6 @@ class APIExecutorFactory:
         elif model_name.startswith('gemini'):  # Google developed model
             return GeminiModelAPI(model_name, gcloud_project_id=gcloud_project_id, gcloud_location=gcloud_location)
         # huggingface + vLLM
-        elif model_name.lower().startswith('qwen'):
+        elif model_name.lower().startswith('qwen3'):
             print("Load Qwen3 model with vLLM: ", model_name)
             return Qwen3ModelAPI(model_name, model_path)
