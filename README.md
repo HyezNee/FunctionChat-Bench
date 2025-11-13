@@ -37,7 +37,7 @@
 - 이 때 `temperature`: 생성 모델의 temperature == 평가 모델 (gpt)의 temperature
 - `model`에는 `model_path`에서 **/** 뒷부분을 넣어주자. (권장) **주의! `/`가 들어갈 경우 에러가 난다!**
 - ~vLLM으로 하고 싶은 경우 `model_path`는 그대로, model 앞에 `vllm_`을 붙여 주면 된다~
-- 
+
 5. response를 jsonl 파일로 생성 후 이걸 기반으로 평가를 시작하는 구조. 도중에 stop해도 변경 사항이 저장됨
 
 
