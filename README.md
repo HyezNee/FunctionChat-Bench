@@ -4,38 +4,41 @@
 1. 코드 다운받기 (git clone ...)
     - 원본 깃헙 다운 ㄴㄴ 수정 버전은 이 저장소에 있음
 2. 환경 세팅
-    - python≤3.11 이어야 하는 것 같다. (더 높을 경우 numpy 설치하는 데 에러남)
+    - ~python≤3.11 이어야 하는 것 같다. (더 높을 경우 numpy 설치하는 데 에러남)~
+    - python 버전은 상관없는 것 같음.
     - 빠른 inference를 위해 **vllm** 설치
-        - vllm 설치 시 single call (500건) 20분, 안 하면 1시간 30분 이상
-3. `FunctionChat-Bench/config/openai.cfg` 을 아래와 같이 수정
+        - ~vllm 설치 시 single call (500건) 20분, 안 하면 1시간 30분 이상~
+        - -> 기존 코드를 vllm serving 형식으로 변경. w/o vllm 코드는 폐기
+3. 벤치마크 평가는 LLM-Judge로 이루어짐. 이를 위해 `FunctionChat-Bench/config/openai.cfg` 을 아래와 같이 수정
     
     ```python
     {
       "api_type": "openai",
       "api_key": "your-api-key",
-      "api_version": "gpt-4.1",
-      "temperature": 0.1, 
+      "api_version": "gpt-5",
+      "temperature": 1.0, 
       "max_tokens": 4096, 
       "n": 3
     }
     ```
     
-4. generation command (예시: Qwen3-8B 모델) w/ vLLM
+4. generation + evaluation command (Qwen3-8B 모델) w/ vLLM
    ```bash
    # run singlecall evaluation
     python3 evaluate.py singlecall \
     --input_path data/FunctionChat-Singlecall.jsonl \
     --tools_type all \
     --system_prompt_path data/system_prompt.txt \
-    --temperature 0.1 \
-    --model vllm_Qwen3-8B \
+    --temperature 1.0 \
+    --model Qwen3-8B \
     --api_key your-openai-api-key \
     --model_path Qwen/Qwen3-8B
     ```
-- 이 때 `temperature`: 생성 모델의 temperature가 아닌, 평가 모델 (gpt)의 temperature임!
+- 이 때 `temperature`: 생성 모델의 temperature == 평가 모델 (gpt)의 temperature
 - `model`에는 `model_path`에서 **/** 뒷부분을 넣어주자. (권장) **주의! `/`가 들어갈 경우 에러가 난다!**
-- vLLM으로 하고 싶은 경우 `model_path`는 그대로, model 앞에 `vllm_`을 붙여 주면 된다
-5. response를 jsonl 파일로 생성 후 이걸 기반으로 평가 시작
+- ~vLLM으로 하고 싶은 경우 `model_path`는 그대로, model 앞에 `vllm_`을 붙여 주면 된다~
+
+5. response를 jsonl 파일로 생성 후 이걸 기반으로 평가를 시작하는 구조. 도중에 stop해도 변경 사항이 저장됨
 
 
 ## (추가) 데이터셋
