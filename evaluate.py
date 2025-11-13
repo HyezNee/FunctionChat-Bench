@@ -139,11 +139,11 @@ def singlecall(model,
     end_time = datetime.now()
     print("총 걸린 시간: ", end_time - start_time)
     print("하나 inference 평균 시간: ", (end_time - start_time) / len(api_request_list))
-    # EvaluationHandler(eval_type).evaluate(
-    #     api_request_list, api_response_list,
-    #     eval_file_path, eval_log_file_path,
-    #     reset, sample, debug, only_exact
-    # )
+    EvaluationHandler(eval_type).evaluate(
+        api_request_list, api_response_list,
+        eval_file_path, eval_log_file_path,
+        reset, sample, debug, only_exact
+    )
 
 
 @cli.command()
