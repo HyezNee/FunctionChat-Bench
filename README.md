@@ -30,7 +30,7 @@
     --tools_type all \
     --system_prompt_path data/system_prompt.txt \
     --temperature 1.0 \
-    --model vllm_Qwen3-8B \
+    --model Qwen3-8B \
     --api_key your-openai-api-key \
     --model_path Qwen/Qwen3-8B
     ```
