@@ -469,6 +469,7 @@ class Qwen3ModelAPI(AbstractModelAPIExecutor):
             "--port", str(self.port),
             "--dtype", "bfloat16",
             "--gpu-memory-utilization", "0.90",
+            #"--max-model-len", "8192",
             "--trust-remote-code",
             "--reasoning-parser", "qwen3",
             "--enable-auto-tool-choice",
@@ -481,7 +482,7 @@ class Qwen3ModelAPI(AbstractModelAPIExecutor):
             start_new_session=True
         )
         print("[vLLM] waiting for readiness ...")
-        if not self.wait_until_ready(self.base_url, timeout_s=1000):
+        if not self.wait_until_ready(self.base_url, timeout_s=2000):
             raise RuntimeError("vLLM server did not become ready in time.")
         print("[vLLM] server is ready. issuing OpenAI-compatible request...")
 
@@ -562,6 +563,137 @@ class Qwen3ModelAPI(AbstractModelAPIExecutor):
         response_output = response['choices'][0]['message']
         return response_output
 
+class HyperCLOVAXModelAPI(AbstractModelAPIExecutor):
+    def __init__(self, model, model_path):
+        super().__init__(model, None)
+        self.model_path = model_path
+        self.port = find_free_port()
+        self.host = "127.0.0.1"
+        self.base_url = f"http://{self.host}:{self.port}"
+        self.max_tokens = 4096
+
+        print(f"[vLLM] launching on {self.base_url} with model='{self.model}' ...")
+        cmd = [
+            "vllm", "serve",
+            self.model_path,
+            "--host", self.host,
+            "--port", str(self.port),
+            "--dtype", "bfloat16",
+            "--gpu-memory-utilization", "0.90",
+            "--trust-remote-code",
+            "--reasoning-parser", "hcx",
+            "--enable-auto-tool-choice",
+            "--tool-call-parser", "hcx",
+        ]
+        self.proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+            start_new_session=True
+        )
+        print("[vLLM] waiting for readiness ...")
+        if not self.wait_until_ready(self.base_url, timeout_s=1000):
+            raise RuntimeError("vLLM server did not become ready in time.")
+        print("[vLLM] server is ready. issuing OpenAI-compatible request...")
+
+        self.client = openai.OpenAI(base_url=f"{self.base_url}/v1", api_key="EMPTY")
+        self.openai_chat_completion = self.client.chat.completions.create
+    
+    def wait_until_ready(self, base_url: str, timeout_s: int = 120):
+        # vLLM API 서버 health 체크
+        t0 = time.time()
+        health = f"{base_url}/health"
+        # health 없으면 /v1/models를 폴링해도 됨
+        while time.time() - t0 < timeout_s:
+            try:
+                r = requests.get(health, timeout=2)
+                if r.status_code == 200:
+                    return True
+            except Exception:
+                pass
+            time.sleep(0.5)
+        return False
+
+    def graceful_kill(self, grace_s: int = 10):
+        if self.proc.poll() is not None:
+            return
+        try:
+            if os.name == "nt":
+                self.proc.terminate()
+            else:
+                os.killpg(self.proc.pid, signal.SIGTERM)
+            waited = 0
+            while self.proc.poll() is None and waited < grace_s:
+                time.sleep(0.5)
+                waited += 0.5
+            if self.proc.poll() is None:
+                if os.name == "nt":
+                    self.proc.kill()
+                else:
+                    os.killpg(self.proc.pid, signal.SIGKILL)
+        except Exception:
+            pass
+
+    def __del__(self):
+        self.graceful_kill()
+        print("[vLLM] done.")
+    
+    def predict(self, api_request):
+        """
+        A method get model predictions for a request.
+
+        Parameters:
+        api_request (dict): The API request data for making predictions.
+        """
+        response = None
+        try_cnt = 0
+        while True:
+            try:
+                response = self.openai_chat_completion(
+                    model=self.model_path,
+                    temperature=api_request['temperature'],
+                    messages=api_request['messages'],
+                    tools=api_request['tools'],
+                    tool_choice="auto",
+                    max_completion_tokens=self.max_tokens,
+                    stop=["<|im_end|><|endofturn|>", "<|im_end|><|stop|>"],
+                    extra_body={
+                        "skip_special_tokens": False,
+                        # "force_reasoning": True
+                    }
+                )
+                response = response.model_dump()
+            except KeyError as e:
+                print(e)
+                print(json.dumps(api_request['messages'], ensure_ascii=False))
+                sys.exit(1)
+            except Exception as e:
+                print(f".. retry api call .. {try_cnt}")
+                try_cnt += 1
+                print(e)
+                print(json.dumps(api_request['messages'], ensure_ascii=False))
+                continue
+            else:
+                break
+        response_output = response['choices'][0]['message']
+        if response_output["tool_calls"] == []:
+            try:
+                # <tool_call>\n{...json...}\n</tool_call> 파싱
+                response_output['content'] = response_output['content'].split("<tool_call>")[-1].split("</tool_call")[0].strip()
+                maybe_tools = json.loads(response_output['content'])
+                response_output['tool_calls'] = [
+                    {
+                        'id': "hcx-functioncall-random-id",
+                        'function': {
+                            "arguments": maybe_tools.get('arguments', "{}"),
+                            "name": maybe_tools['name'],
+                            "type": "function",
+                        }
+                    }
+                ]
+            except Exception:
+                pass
+        return response_output
 
 class APIExecutorFactory:
     """
@@ -605,3 +737,6 @@ class APIExecutorFactory:
         elif model_name.lower().startswith('qwen3'):
             print("Load Qwen3 model with vLLM: ", model_name)
             return Qwen3ModelAPI(model_name, model_path)
+        elif model_name.lower().startswith('hyperclovax'):
+            print("Load HyperCLOVAX model with vLLM: ", model_name)
+            return HyperCLOVAXModelAPI(model_name, model_path)
